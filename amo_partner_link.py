@@ -234,13 +234,26 @@ def create_task(lead, text):
     }])
 
 
-def attach_partner(lead, partner, contact_id, company_id, tag_name):
+def partner_referrer(partner, code):
+    """Код партнёра для поля лида «referrer партнера»: из карточки партнёра, иначе найденный код."""
+    return code_of(cf(partner, F_PARTNER_REFERRER)) or code
+
+
+def fill_referrer_and_tag(lead, ref, tag_name):
+    """Дозаполнить «referrer партнера» и тег с названием партнёра у уже обработанного лида."""
+    body = {"custom_fields_values": [{"field_id": F_PARTNER_REFERRER, "values": [{"value": str(ref)}]}]}
+    if tag_name and tag_name not in tags_of(lead):
+        body["tags_to_add"] = [{"name": tag_name}]
+    api("PATCH", f"/api/v4/leads/{lead['id']}", json=body)
+
+
+def attach_partner(lead, partner, contact_id, company_id, tag_name, ref):
     lead_id = lead["id"]
+    fields = [{"field_id": F_PARTNER_REFERRER, "values": [{"value": str(ref)}]}]
     if company_id:
         value = json.dumps({"contacts": [], "leads": [], "companies": [company_id], "customers": []})
-        api("PATCH", f"/api/v4/leads/{lead_id}", json={
-            "custom_fields_values": [{"field_id": F_PARTNER_LINK, "values": [{"value": value}]}]
-        })
+        fields.append({"field_id": F_PARTNER_LINK, "values": [{"value": value}]})
+    api("PATCH", f"/api/v4/leads/{lead_id}", json={"custom_fields_values": fields})
     linked = {c["id"] for c in lead.get("_embedded", {}).get("contacts", [])}
     if contact_id and contact_id not in linked:
         api("POST", f"/api/v4/leads/{lead_id}/link", json=[{"to_entity_id": contact_id, "to_entity_type": "contacts"}])
@@ -272,12 +285,12 @@ def main():
     print(f"Партнёров в индексе: {len({d['id'] for d in partners.values()})}, кодов: {len(partners)}")
 
     leads = load_leads(args.days, args.lead)
-    stats = {"linked": 0, "no_code": 0, "not_found": 0, "skipped": 0}
+    stats = {"linked": 0, "repaired": 0, "no_code": 0, "not_found": 0, "skipped": 0}
 
     for lead in leads:
         lid = lead["id"]
         tags = tags_of(lead)
-        if not args.lead and (TAG_DONE in tags or TAG_FAILED in tags):
+        if not args.lead and TAG_FAILED in tags:
             stats["skipped"] += 1
             continue
         if lead.get("pipeline_id") != LEADS_PIPELINE_ID and not args.lead:
@@ -286,9 +299,27 @@ def main():
         if not is_partner_lead(lead):
             stats["skipped"] += 1
             continue
-        if not args.lead and cf(lead, F_PARTNER_LINK):
-            # партнёр уже прикреплён (например, ещё связкой Albato)
-            stats["skipped"] += 1
+
+        already = TAG_DONE in tags or bool(cf(lead, F_PARTNER_LINK))
+        if not args.lead and already:
+            # партнёр уже прикреплён (скриптом или ещё связкой Albato):
+            # только дозаполняем «referrer партнера» и тег, если их нет
+            if cf(lead, F_PARTNER_REFERRER):
+                stats["skipped"] += 1
+                continue
+            code, src = lead_code(lead)
+            partner = find_partner(code, partners) if code else None
+            if not partner:
+                stats["skipped"] += 1
+                continue
+            ref = partner_referrer(partner, code)
+            contact_id, company_id = partner_contact_and_company(partner["id"])
+            tag_name = partner_tag_name(contact_id, company_id)
+            print(f"  {lid}: уже прикреплён -> дозаполняю referrer партнера {ref}, тег «{tag_name}»  "
+                  f"{BASE}/leads/detail/{lid}")
+            stats["repaired"] += 1
+            if args.apply:
+                fill_referrer_and_tag(lead, ref, tag_name)
             continue
 
         code, src = lead_code(lead)
@@ -311,13 +342,15 @@ def main():
 
         contact_id, company_id = partner_contact_and_company(partner["id"])
         tag_name = partner_tag_name(contact_id, company_id)
+        ref = partner_referrer(partner, code)
         print(f"  {lid}: код {code} (поле {src}) -> партнёр «{partner.get('name')}» {partner['id']}, "
-              f"контакт {contact_id}, компания {company_id}, тег «{tag_name}»  {BASE}/leads/detail/{lid}")
+              f"контакт {contact_id}, компания {company_id}, referrer {ref}, тег «{tag_name}»  "
+              f"{BASE}/leads/detail/{lid}")
         stats["linked"] += 1
         if args.apply:
-            attach_partner(lead, partner, contact_id, company_id, tag_name)
+            attach_partner(lead, partner, contact_id, company_id, tag_name, ref)
 
-    print(f"Итого: прикреплено {stats['linked']}, без кода {stats['no_code']}, "
+    print(f"Итого: прикреплено {stats['linked']}, дозаполнено {stats['repaired']}, без кода {stats['no_code']}, "
           f"партнёр не найден {stats['not_found']}, пропущено {stats['skipped']}")
 
 
