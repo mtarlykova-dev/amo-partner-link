@@ -133,6 +133,19 @@ def code_of(v):
     return m.group(0) if m else None
 
 
+def partner_link_filled(lead):
+    """Поле «Партнер» (707209) заполнено реальной сущностью, а не пустым шаблоном
+    {"contacts":[],"leads":[],"companies":[],"customers":[]}."""
+    raw = cf(lead, F_PARTNER_LINK)
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return True
+    return any(data.get(k) for k in ("contacts", "leads", "companies", "customers"))
+
+
 def tags_of(lead):
     return {t["name"] for t in lead.get("_embedded", {}).get("tags", [])}
 
@@ -300,7 +313,7 @@ def main():
             stats["skipped"] += 1
             continue
 
-        already = TAG_DONE in tags or bool(cf(lead, F_PARTNER_LINK))
+        already = TAG_DONE in tags or partner_link_filled(lead)
         if not args.lead and already:
             # партнёр уже прикреплён (скриптом или ещё связкой Albato):
             # только дозаполняем «referrer партнера» и тег, если их нет
