@@ -1,0 +1,47 @@
+name: Прикрепление партнёра к лидам
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # каждые 15 минут (GitHub может запускать с задержкой)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run — только показать, apply — записать в amo"
+        type: choice
+        options: [dry-run, apply]
+        default: dry-run
+      days:
+        description: "Окно по дате создания лида, дней"
+        default: "3"
+      lead:
+        description: "ID одного лида (необязательно)"
+        default: ""
+
+concurrency:
+  group: partner-link
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Run
+        env:
+          AMO_TOKEN: ${{ secrets.AMO_TOKEN }}
+          AMO_SUBDOMAIN: solarstaff
+          # по расписанию пишем в amo только когда переменная PARTNER_LINK_AUTO_APPLY = true
+          AUTO_APPLY: ${{ vars.PARTNER_LINK_AUTO_APPLY }}
+          MODE: ${{ github.event.inputs.mode }}
+          DAYS: ${{ github.event.inputs.days }}
+          LEAD: ${{ github.event.inputs.lead }}
+        run: |
+          ARGS="--days ${DAYS:-3}"
+          if [ -n "$LEAD" ]; then ARGS="$ARGS --lead $LEAD"; fi
+          if [ "$MODE" = "apply" ]; then ARGS="$ARGS --apply"; fi
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$AUTO_APPLY" = "true" ]; then ARGS="$ARGS --apply"; fi
+          python amo_partner_link.py $ARGS
