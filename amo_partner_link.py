@@ -260,6 +260,16 @@ def fill_referrer_and_tag(lead, ref, tag_name):
     api("PATCH", f"/api/v4/leads/{lead['id']}", json=body)
 
 
+def has_partner_note(lead_id, partner_id):
+    """Уже есть примечание «Лид привлечен партнером» со ссылкой на этого партнёра (например, от Albato)."""
+    marker = f"/leads/detail/{partner_id}"
+    for note in paged(f"/api/v4/leads/{lead_id}/notes", {"filter[note_type]": "common"}, "notes"):
+        t = (note.get("params") or {}).get("text") or ""
+        if "Лид привлечен партнером" in t and marker in t:
+            return True
+    return False
+
+
 def attach_partner(lead, partner, contact_id, company_id, tag_name, ref):
     lead_id = lead["id"]
     fields = [{"field_id": F_PARTNER_REFERRER, "values": [{"value": str(ref)}]}]
@@ -273,7 +283,8 @@ def attach_partner(lead, partner, contact_id, company_id, tag_name, ref):
     url = cf(partner, F_PARTNER_PERSONAL_URL) or "—"
     text = (f"⛳️ Лид привлечен партнером: {BASE}/leads/detail/{partner['id']} "
             f"с помощью персональной ссылки: {url}\nПартнер прикреплен к текущей сделке!")
-    api("POST", f"/api/v4/leads/{lead_id}/notes", json=[{"note_type": "common", "params": {"text": text}}])
+    if not has_partner_note(lead_id, partner["id"]):
+        api("POST", f"/api/v4/leads/{lead_id}/notes", json=[{"note_type": "common", "params": {"text": text}}])
     tags = [{"name": TAG_DONE}]
     if tag_name:
         tags.append({"name": tag_name})
