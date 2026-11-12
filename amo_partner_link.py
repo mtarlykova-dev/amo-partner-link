@@ -174,6 +174,23 @@ def partner_contact_and_company(deal_id):
     return (main["id"] if main else None), (companies[0]["id"] if companies else None)
 
 
+def partner_tag_name(contact_id, company_id):
+    """Тег лида: название компании партнёра, а если его нет — полное имя контакта."""
+    if company_id:
+        company = api("GET", f"/api/v4/companies/{company_id}") or {}
+        name = (company.get("name") or "").strip()
+        if name:
+            return name
+    if contact_id:
+        contact = api("GET", f"/api/v4/contacts/{contact_id}") or {}
+        name = (contact.get("name") or "").strip()
+        if not name:
+            name = " ".join(x for x in (contact.get("first_name"), contact.get("last_name")) if x).strip()
+        if name:
+            return name
+    return None
+
+
 # ---------------------------------------------------------------- лиды
 def is_partner_lead(lead):
     if PARTNER_UTM in (norm(cf(lead, F_UTM_SOURCE)), norm(cf(lead, F_LAST_UTM_SOURCE))):
@@ -217,7 +234,7 @@ def create_task(lead, text):
     }])
 
 
-def attach_partner(lead, partner, contact_id, company_id):
+def attach_partner(lead, partner, contact_id, company_id, tag_name):
     lead_id = lead["id"]
     if company_id:
         value = json.dumps({"contacts": [], "leads": [], "companies": [company_id], "customers": []})
@@ -231,7 +248,10 @@ def attach_partner(lead, partner, contact_id, company_id):
     text = (f"⛳️ Лид привлечен партнером: {BASE}/leads/detail/{partner['id']} "
             f"с помощью персональной ссылки: {url}\nПартнер прикреплен к текущей сделке!")
     api("POST", f"/api/v4/leads/{lead_id}/notes", json=[{"note_type": "common", "params": {"text": text}}])
-    add_tag(lead_id, TAG_DONE)
+    tags = [{"name": TAG_DONE}]
+    if tag_name:
+        tags.append({"name": tag_name})
+    api("PATCH", f"/api/v4/leads/{lead_id}", json={"tags_to_add": tags})
 
 
 # ---------------------------------------------------------------- main
@@ -290,11 +310,12 @@ def main():
             continue
 
         contact_id, company_id = partner_contact_and_company(partner["id"])
+        tag_name = partner_tag_name(contact_id, company_id)
         print(f"  {lid}: код {code} (поле {src}) -> партнёр «{partner.get('name')}» {partner['id']}, "
-              f"контакт {contact_id}, компания {company_id}")
+              f"контакт {contact_id}, компания {company_id}, тег «{tag_name}»  {BASE}/leads/detail/{lid}")
         stats["linked"] += 1
         if args.apply:
-            attach_partner(lead, partner, contact_id, company_id)
+            attach_partner(lead, partner, contact_id, company_id, tag_name)
 
     print(f"Итого: прикреплено {stats['linked']}, без кода {stats['no_code']}, "
           f"партнёр не найден {stats['not_found']}, пропущено {stats['skipped']}")
