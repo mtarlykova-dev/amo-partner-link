@@ -205,18 +205,26 @@ def partner_tag_name(contact_id, company_id):
 
 
 # ---------------------------------------------------------------- лиды
+def ref_code(lead):
+    """Код из поля referrer — только если там одно число (лиды из виджета партнёра).
+    Обычная ссылка (https://…?ysclid=…) кодом не считается, даже если в ней есть цифры."""
+    v = str(cf(lead, F_REFERRER) or "").strip()
+    return v if re.fullmatch(r"\d{6,}", v) else None
+
+
 def is_partner_lead(lead):
     if PARTNER_UTM in (norm(cf(lead, F_UTM_SOURCE)), norm(cf(lead, F_LAST_UTM_SOURCE))):
         return True
-    return code_of(cf(lead, F_REFERRER)) is not None
+    return ref_code(lead) is not None
 
 
 def lead_code(lead):
-    for fid in (F_UTM_MEDIUM, F_LAST_UTM_MEDIUM, F_REFERRER):
+    for fid in (F_UTM_MEDIUM, F_LAST_UTM_MEDIUM):
         c = code_of(cf(lead, fid))
         if c:
             return c, fid
-    return None, None
+    c = ref_code(lead)
+    return (c, F_REFERRER) if c else (None, None)
 
 
 def load_leads(days, lead_id=None):
