@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "dry-run — только показать, apply — записать в amo"
+        description: "dry-run — только показать, apply — записать в amo, tags-only — только теги партнёров"
         type: choice
-        options: [dry-run, apply]
+        options: [dry-run, apply, tags-only-dry-run, tags-only]
         default: dry-run
       days:
         description: "Окно по дате создания лида, дней"
@@ -43,5 +43,7 @@ jobs:
           ARGS="--days ${DAYS:-3}"
           if [ -n "$LEAD" ]; then ARGS="$ARGS --lead $LEAD"; fi
           if [ "$MODE" = "apply" ]; then ARGS="$ARGS --apply"; fi
+          if [ "$MODE" = "tags-only-dry-run" ]; then ARGS="$ARGS --tags-only"; fi
+          if [ "$MODE" = "tags-only" ]; then ARGS="$ARGS --tags-only --apply"; fi
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$AUTO_APPLY" = "true" ]; then ARGS="$ARGS --apply"; fi
           python amo_partner_link.py $ARGS

@@ -31,6 +31,7 @@
 """
 
 import argparse
+import html
 import json
 import os
 import re
@@ -147,7 +148,8 @@ def partner_link_filled(lead):
 
 
 def tags_of(lead):
-    return {t["name"] for t in lead.get("_embedded", {}).get("tags", [])}
+    # amo отдаёт кавычки в названиях тегов как &quot;
+    return {html.unescape(t["name"]) for t in lead.get("_embedded", {}).get("tags", [])}
 
 
 # ---------------------------------------------------------------- партнёры
@@ -215,10 +217,15 @@ def ref_code(lead):
 def is_partner_lead(lead):
     if PARTNER_UTM in (norm(cf(lead, F_UTM_SOURCE)), norm(cf(lead, F_LAST_UTM_SOURCE))):
         return True
+    if code_of(cf(lead, F_PARTNER_REFERRER)):      # «referrer партнера» проставлен в лиде (вручную или скриптом)
+        return True
     return ref_code(lead) is not None
 
 
 def lead_code(lead):
+    c = code_of(cf(lead, F_PARTNER_REFERRER))
+    if c:
+        return c, F_PARTNER_REFERRER
     for fid in (F_UTM_MEDIUM, F_LAST_UTM_MEDIUM):
         c = code_of(cf(lead, fid))
         if c:
@@ -305,6 +312,8 @@ def main():
     ap.add_argument("--apply", action="store_true", help="записать изменения (без флага — dry-run)")
     ap.add_argument("--days", type=int, default=3, help="окно по дате создания лида, дней")
     ap.add_argument("--lead", type=int, help="обработать один лид по ID")
+    ap.add_argument("--tags-only", action="store_true",
+                    help="только поставить тег с названием партнёра (поля, контакт и примечание не трогать)")
     args = ap.parse_args()
 
     if not TOKEN:
@@ -332,7 +341,25 @@ def main():
             stats["skipped"] += 1
             continue
 
-        already = TAG_DONE in tags or partner_link_filled(lead)
+        if args.tags_only:
+            code, src = lead_code(lead)
+            partner = find_partner(code, partners) if code else None
+            if not partner:
+                stats["not_found" if code else "no_code"] += 1
+                print(f"  {lid}: код {code or '—'} — партнёр не найден, тег не ставлю")
+                continue
+            contact_id, company_id = partner_contact_and_company(partner["id"])
+            tag_name = partner_tag_name(contact_id, company_id)
+            if not tag_name or tag_name in tags:
+                stats["skipped"] += 1
+                continue
+            print(f"  {lid}: + тег «{tag_name}» (партнёр {partner['id']}, код {code} из поля {src})  {BASE}/leads/detail/{lid}")
+            stats["repaired"] += 1
+            if args.apply:
+                api("PATCH", f"/api/v4/leads/{lid}", json={"tags_to_add": [{"name": tag_name}]})
+            continue
+
+        already =TAG_DONE in tags or partner_link_filled(lead)
         if not args.lead and already:
             # партнёр уже прикреплён (скриптом или ещё связкой Albato):
             # только дозаполняем «referrer партнера» и тег, если их нет
