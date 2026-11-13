@@ -189,18 +189,32 @@ def partner_contact_and_company(deal_id):
     return (main["id"] if main else None), (companies[0]["id"] if companies else None)
 
 
-def partner_tag_name(contact_id, company_id):
-    """Тег лида: название компании партнёра, а если его нет — полное имя контакта."""
+JUNK_NAMES = {"название не указано", "контакт", "без названия", "компания", "новый контакт", "сделка"}
+
+
+def _real(name):
+    name = (name or "").strip()
+    return name if name and name.lower() not in JUNK_NAMES and not name.lower().startswith("сделка #") else ""
+
+
+def partner_tag_name(contact_id, company_id, deal_name=None):
+    """Тег лида: название компании партнёра, если его нет — полное имя контакта,
+    если и его нет — название сделки партнёра (без «Партнер:» / «Заявка на участие…:»).
+    Заглушки вроде «Название не указано» или «Контакт» не используются."""
     if company_id:
         company = api("GET", f"/api/v4/companies/{company_id}") or {}
-        name = (company.get("name") or "").strip()
+        name = _real(company.get("name"))
         if name:
             return name
     if contact_id:
         contact = api("GET", f"/api/v4/contacts/{contact_id}") or {}
-        name = (contact.get("name") or "").strip()
-        if not name:
-            name = " ".join(x for x in (contact.get("first_name"), contact.get("last_name")) if x).strip()
+        name = _real(contact.get("name")) or _real(
+            " ".join(x for x in (contact.get("first_name"), contact.get("last_name")) if x))
+        if name:
+            return name
+    if deal_name:
+        name = re.sub(r"^\s*(партнер|партнёр|заявка на участие в партнерской программе)\s*:\s*", "", deal_name, flags=re.I)
+        name = _real(name.split(" | ")[0])
         if name:
             return name
     return None
@@ -349,7 +363,7 @@ def main():
                 print(f"  {lid}: код {code or '—'} — партнёр не найден, тег не ставлю")
                 continue
             contact_id, company_id = partner_contact_and_company(partner["id"])
-            tag_name = partner_tag_name(contact_id, company_id)
+            tag_name = partner_tag_name(contact_id, company_id, partner.get("name"))
             if not tag_name or tag_name in tags:
                 stats["skipped"] += 1
                 continue
@@ -373,7 +387,7 @@ def main():
                 continue
             ref = partner_referrer(partner, code)
             contact_id, company_id = partner_contact_and_company(partner["id"])
-            tag_name = partner_tag_name(contact_id, company_id)
+            tag_name = partner_tag_name(contact_id, company_id, partner.get("name"))
             print(f"  {lid}: уже прикреплён -> дозаполняю referrer партнера {ref}, тег «{tag_name}»  "
                   f"{BASE}/leads/detail/{lid}")
             stats["repaired"] += 1
@@ -400,7 +414,7 @@ def main():
             continue
 
         contact_id, company_id = partner_contact_and_company(partner["id"])
-        tag_name = partner_tag_name(contact_id, company_id)
+        tag_name = partner_tag_name(contact_id, company_id, partner.get("name"))
         ref = partner_referrer(partner, code)
         print(f"  {lid}: код {code} (поле {src}) -> партнёр «{partner.get('name')}» {partner['id']}, "
               f"контакт {contact_id}, компания {company_id}, referrer {ref}, тег «{tag_name}»  "
